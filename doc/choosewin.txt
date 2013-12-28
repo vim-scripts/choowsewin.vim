@@ -1,0 +1,112 @@
+*choowsewin.txt* land to window you choose like tmux's 'display-pane'.
+
+Version: 0.6
+Author : t9md <taqumd@gmail.com>
+GitHub : https://github.com/t9md/vim-choowsewin
+==============================================================================
+CONTENTS					*choowsewin-contents*
+
+Introduction				    |choowsewin-introduction|
+Mapping					    |choowsewin-mapping|
+Commands				    |choowsewin-commands|
+Variables				    |choowsewin-variables|
+Functions				    |choowsewin-functions|
+Configuration Example			    |choowsewin-example|
+Bug					    |choowsewin-bug|
+Todo					    |choowsewin-todo|
+Changelog				    |choowsewin-changelog|
+
+==============================================================================
+INTRODUCTION					*choowsewin-introduction*
+
+Land to window you choose~
+
+Aiming to mimic tmux's `display-pane` feature, which enables you to choose
+window interactively.
+
+This plugin should be useful especially when you are working on high
+resolution wide display.
+Since with wide display, you are likely to open multiple window and
+moving around window is a little bit tiresome.
+
+This plugin make window excursion simplify.
+
+	1. display window label on statusbar
+	2. read input from user
+	3. you can land window you choose
+
+==============================================================================
+MAPPINGS					*choowsewin-mappings*
+
+<Plug>(choosewin)
+
+==============================================================================
+COMMANDS						*choowsewin-commands*
+
+*:ChooseWin*
+
+==============================================================================
+VARIABLES						*choowsewin-variables*
+
+*g:choosewin_active*
+	Default: 0
+	Type:    |Number|
+	Become active while choosewin is activated, for use in &statusline
+
+*g:choosewin_statusline_replace*
+	Default: 1
+	Type: Number
+
+*g:choosewin_label_color*
+	Default: { 'gui': ['ForestGreen', 'white', 'bold'], 'cterm': [ 9, 16] }
+	Type: |Dictionary|
+
+	Set color with collowing fomrat.
+	{
+	  'gui': [ {guibg}, {guifg}, {gui} ],
+	  'cterm': [ {ctermbg}, {ctermfg}, {cterm}]
+	}
+
+*g:choosewin_other_color*
+	Default: { 'gui': ['gray20', 'black'], 'cterm': [ 240, 0] }
+	Type: |Dictionary|
+
+*g:choosewin_label_align*
+	Default: 'center'
+	One of 'right', 'center', 'left'
+
+*g:choosewin_label_padding*
+	Default: 3
+	Type: |Number|
+	Controll padding concatanated around window label.
+
+*g:choosewin_label_fill*
+	Default: 0
+	Type: |Number|
+	Set 1 to fill statusline
+
+==============================================================================
+FUNCTIONS						*choowsewin-functions*
+
+==============================================================================
+CONFIGURATION EXAMPLE				    *choowsewin-example*
+>
+	nmap  -  <Plug>(choosewin)
+<
+==============================================================================
+BUG							    *choowsewin-bug*
+
+==============================================================================
+TODO							    *choowsewin-todo*
+
+==============================================================================
+CHANGELOG						*choowsewin-changelog*
+
+2013-12-28: v0.6
+	- cleanup
+	- now independent from &statusline plugin( such as ezbar )
+2013-12-21: v0.1
+	- initial release
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:

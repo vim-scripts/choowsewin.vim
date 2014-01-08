@@ -1,10 +1,17 @@
-function! s:highlight_preserve(hlname) "{{{1
-  redir => HL_SAVE
-  execute 'silent! highlight ' . a:hlname
-  redir END
-  return 'highlight ' . a:hlname . ' ' .
-        \  substitute(matchstr(HL_SAVE, 'xxx \zs.*'), "\n", ' ', 'g')
+function! s:msg(msg) "{{{1
+  if !empty(a:msg)
+    echohl Type
+    echon 'choosewin: '
+    echohl Normal
+  endif
+  echon a:msg
 endfunction
+"}}}
+
+" Constant:
+unlet! s:NOT_FOUND
+let s:NOT_FOUND = -1
+lockvar s:NOT_FOUND
 
 function! s:dict_invert(dict) "{{{1
   let R = {}
@@ -47,20 +54,31 @@ function! s:options_restore(options) "{{{1
     unlet var val
   endfor
 endfunction
+
+function! s:str_split(str) "{{{1
+  return split(a:str, '\zs')
+endfunction
+
+function! s:goto_tabwin(tabnum, winnum) "{{{1
+  silent execute 'tabnext ' a:tabnum
+  silent execute a:winnum 'wincmd w'
+endfunction
 "}}}
 
 let s:cw = {}
-function! s:cw.hl_set() "{{{1
-  if !has_key(self, 'highlighter')
-    let self.highlighter = choosewin#highlighter#new('ChooseWin')
-  endif
+function! s:cw.get_env() "{{{1
+  return {
+        \ 'win': { 'cur': winnr(),     'all': self.win_all() },
+        \ 'tab': { 'cur': tabpagenr(), 'all': self.tab_all() },
+        \ }
+endfunction
 
-  let self.color_label = self.highlighter.register(g:choosewin_color_label)
-  let self.color_other = g:choosewin_label_fill
-        \ ? self.color_label
-        \ : self.highlighter.register(g:choosewin_color_other)
-  let self.color_label_current =
-        \ self.highlighter.register(g:choosewin_color_label_current)
+function! s:cw.tab_all() "{{{1
+  return range(1, tabpagenr('$'))
+endfunction
+
+function! s:cw.win_all() "{{{1
+  return range(1, winnr('$'))
 endfunction
 
 function! s:cw.statusline_save(winnums) "{{{1
@@ -69,11 +87,22 @@ function! s:cw.statusline_save(winnums) "{{{1
   endfor
 endfunction
 
+function! s:cw.blink_cword() "{{{1
+  if ! self.conf['blink_on_land']
+    return
+  endif
+  let pat = '\k*\%#\k*'
+  for i in range(2)
+    let id = matchadd(self.color.Land, pat) | redraw | sleep 80m
+    call matchdelete(id)                    | redraw | sleep 80m
+  endfor
+endfunction
+
 function! s:cw.statusline_replace(winnums) "{{{1
   call self.statusline_save(a:winnums)
 
   for win in a:winnums
-    let s = self.prepare_label(win, g:choosewin_label_align)
+    let s = self.prepare_label(win, self.conf['label_align'])
     call setwinvar(win, '&statusline', s)
   endfor
 endfunction
@@ -84,60 +113,63 @@ function! s:cw.statusline_restore() "{{{1
   endfor
 endfunction
 
-
 function! s:cw.prepare_label(win, align) "{{{1
-  let pad = repeat(' ', g:choosewin_label_padding)
+  let pad = repeat(' ', self.conf['label_padding'])
   let label = self.win2label[a:win]
   let win_s = pad . label . pad
   let color = winnr() ==# a:win
-        \ ? self.color_label_current
-        \ : self.color_label
+        \ ? self.color.LabelCurrent
+        \ : self.color.Label
 
   if a:align ==# 'left'
-    return printf('%%#%s# %s %%#%s# %%= ', color, win_s, self.color_other)
+    return printf('%%#%s# %s %%#%s# %%= ', color, win_s, self.color.Other)
 
   elseif a:align ==# 'right'
-    return printf('%%#%s# %%= %%#%s# %s ', self.color_other, color, win_s)
+    return printf('%%#%s# %%= %%#%s# %s ', self.color.Other, color, win_s)
 
   elseif a:align ==# 'center'
     let padding = repeat(' ', winwidth(a:win)/2-len(win_s))
     return printf('%%#%s# %s %%#%s# %s %%#%s# %%= ',
-          \ self.color_other, padding, color, win_s, self.color_other)
+          \ self.color.Other, padding, color, win_s, self.color.Other)
   endif
 endfunction
 
 function! s:cw.tabline() "{{{1
   let R         = ''
-  let padding   = repeat(' ', g:choosewin_label_padding)
-  let tabnums   = range(1, tabpagenr('$'))
-  let lasttab   = tabnums[-1]
-  let sepalator = printf('%%#%s# ', self.color_other)
-  for tn in tabnums
-    let label = self.tab2label[tn]
-    let s     = padding . label . padding
-    let color = tabpagenr() ==# tn
-          \ ? self.color_label_current
-          \ : self.color_label
-    let R .= printf('%%#%s# %s ', color, s)
-    let R .= tn !=# lasttab ? sepalator : ''
+  let pad   = repeat(' ', self.conf['label_padding'])
+  let sepalator = printf('%%#%s# ', self.color.Other)
+  for tabnum in self.env.tab.all
+    let color = tabpagenr() ==# tabnum
+          \ ? self.color.LabelCurrent
+          \ : self.color.Label
+
+    let R .= printf('%%#%s# %s ', color,  pad . self.get_tablabel(tabnum) . pad)
+    let R .= tabnum !=# self.env.tab.all[-1] ? sepalator : ''
   endfor
-  let R .= printf('%%#%s#', self.color_other)
+  let R .= printf('%%#%s#', self.color.Other)
   return R
+endfunction
+
+function! s:cw.get_tablabel(tabnum)
+  return get(self._tablabel_split, a:tabnum - 1, '..')
 endfunction
 
 function! s:cw.label2num(nums, label) "{{{1
   let R = {}
+  if empty(a:label)
+    return R
+  endif
   let nums = copy(a:nums)
-  for c in split(a:label, '\zs')
-    let n = remove(nums, 0)
-    let R[c] = n
-    if empty(nums)
+  let label = s:str_split(a:label)
+  while 1
+    let R[remove(label, 0)] = remove(nums, 0)
+    if empty(nums) || empty(label)
       break
     endif
-  endfor
+  endwhile
+
   return R
 endfunction
-
 
 function! s:cw.winlabel_init(winnums, label) "{{{1
   let self.label2win  = self.label2num(a:winnums, a:label)
@@ -150,11 +182,27 @@ function! s:cw.tablabel_init(tabnums, label) "{{{1
 endfunction
 
 function! s:cw.init() "{{{1
-  let self.statusline = {}
-  let self.options    = {}
-  let self.win_dest = ''
-  call self.tablabel_init(range(1, tabpagenr('$')), g:choosewin_tablabel)
-  call self.hl_set()
+  let self.exception       = ''
+  let self.statusline      = {}
+  let self.tablabel        = self.conf['tablabel']
+  let self._tablabel_split = s:str_split(self.tablabel)
+  let self.tab_options         = {}
+  let self.win_dest        = ''
+  let self.env             = self.get_env()
+  let self.env_orig        = deepcopy(self.env)
+  let self.keymap          = extend(self.keymap_default(), self.conf['keymap'])
+  call self.tablabel_init(self.env.tab.all, self.tablabel)
+endfunction
+
+function! s:cw.keymap_default()
+  return {
+        \ '0':     'tab_first',
+        \ '[':     'tab_prev',
+        \ ']':     'tab_next',
+        \ '$':     'tab_last',
+        \ ';':     'win_land',
+        \ "\<CR>": 'win_land',
+        \ }
 endfunction
 
 function! s:cw.prompt_show(prompt) "{{{1
@@ -162,74 +210,328 @@ function! s:cw.prompt_show(prompt) "{{{1
 endfunction
 
 function! s:cw.read_input() "{{{1
+  redraw
   call self.prompt_show('choose > ')
   return nr2char(getchar())
 endfunction
+
+function! s:cw.config() "{{{1
+  return {
+        \ 'statusline_replace':        g:choosewin_statusline_replace,
+        \ 'tabline_replace':           g:choosewin_tabline_replace,
+        \ 'overlay_enable':            g:choosewin_overlay_enable,
+        \ 'overlay_shade':             g:choosewin_overlay_shade,
+        \ 'overlay_clear_multibyte':   g:choosewin_overlay_clear_multibyte,
+        \ 'label_align':               g:choosewin_label_align,
+        \ 'label_padding':             g:choosewin_label_padding,
+        \ 'label_fill':                g:choosewin_label_fill,
+        \ 'blink_on_land':             g:choosewin_blink_on_land,
+        \ 'return_on_single_win':      g:choosewin_return_on_single_win,
+        \ 'label':                     g:choosewin_label,
+        \ 'keymap':                    g:choosewin_keymap,
+        \ 'tablabel':                  g:choosewin_tablabel,
+        \ 'auto_choose':               0,
+        \ }
+endfunction
+
+function! s:cw.tab_choose(num) "{{{1
+  silent execute 'tabnext ' a:num
+  let self.env.tab.cur = a:num
+endfunction
+
+function! s:cw.win_choose(num) "{{{1
+  silent execute a:num 'wincmd w'
+  let self.env.win.cur = a:num
+endfunction
+
+function! s:cw.choose(winnum, winlabel) "{{{1
+  let [action, num] = self.get_action(self.read_input())
+  if action ==# 'tab'
+    if num ==# self.env.tab.cur
+      return
+    endif
+    call self.label_clear()
+    call self.tab_choose(num)
+    call self.label_show(self.win_all(), a:winlabel)
+    return
+  elseif action ==# 'win'
+    let self.win_dest = num
+    call self.label_clear()
+    throw 'CHOOSED'
+  elseif action ==# 'cancel'
+    call self.label_clear()
+    call self.tab_choose(self.env_orig.tab.cur)
+    call self.win_choose(self.env_orig.win.cur)
+    throw 'CANCELED'
+  endif
+endfunction
+
+function! s:cw.get_action(input) "{{{1
+  " [ kind, arg ] style
+
+  let tabn = s:get_ic(self.label2tab, a:input, 0)
+  if !empty(tabn)
+    return [ 'tab', tabn ]
+  endif
+
+  let winn = s:get_ic(self.label2win, a:input, 0)
+  if !empty(winn)
+    return [ 'win', winn ]
+  endif
+
+  let action = get(self.keymap, a:input)
+  if !empty(action)
+    if action =~# 'tab_'
+      let tabn =
+            \ action ==# 'tab_first' ? 1 :
+            \ action ==# 'tab_prev'  ? max([1, self.env.tab.cur - 1]) :
+            \ action ==# 'tab_next'  ? min([tabpagenr('$'), self.env.tab.cur + 1]) :
+            \ action ==# 'tab_last'  ? tabpagenr('$') :
+            \ -1
+
+      if tabn ==# -1
+        throw 'UNKNOWN_ACTION'
+      endif
+
+      return [ 'tab', tabn ]
+    elseif action ==# 'win_land'
+      return [ 'win', winnr() ]
+    else
+        throw 'UNKNOWN_ACTION'
+    endif
+  endif
+
+  return [ 'cancel', 1 ]
+endfunction
+
+function! s:cw.land_win(winnum) "{{{1
+  silent execute a:winnum 'wincmd w'
+  call self.blink_cword()
+endfunction
 "}}}
 
-let s:vim_options = {
+let s:vim_tab_options = {
       \ '&tabline':     '%!choosewin#tabline()',
-      \ '&guitablabel': '%{g:choosewin_tablabel[v:lnum-1]}',
+      \ '&guitablabel': '%{choosewin#get_tablabel(v:lnum)}',
       \ }
 
-function! s:cw.start(winnums, ...) "{{{1
-  if g:choosewin_return_on_single_win && len(a:winnums) ==# 1 | return | endif
-  try
-    let NOT_FOUND = -1
-    let winlabel = !empty(a:0) ? a:1 : g:choosewin_label
-    let winnums  = a:winnums
-    call self.init()
-    let self.options = s:options_replace(s:vim_options)
+function! s:cw.last_status() "{{{1
+  return [ tabpagenr(), winnr() ]
+endfunction
 
-    while 1
-      call self.winlabel_init(winnums, winlabel)
-      call self.statusline_replace(winnums)
-      redraw
-      let input = self.read_input()
-      let tabn = s:get_ic(self.label2tab, input, NOT_FOUND)
-      if tabn !=# NOT_FOUND
-        if tabn ==# tabpagenr()
-          continue
-        endif
-        call self.statusline_restore()
-        silent execute 'tabnext ' tabn
-        let winnums  = range(1, winnr('$'))
-      else
-        let winn = s:get_ic(self.label2win, input, NOT_FOUND)
-        if winn !=# NOT_FOUND
-          let self.win_dest = winn
-        endif
-        break
-      endif
-    endwhile
-  finally
+function! s:cw.valid_winnums(winnums)
+  return filter(copy(a:winnums), ' index(self.win_all(), v:val) != -1 ')
+endfunction
+
+function! s:cw.label_show(winnums, winlabel) "{{{1
+  let winnums = self.valid_winnums(a:winnums)[ : len(a:winlabel) - 1 ]
+  call self.winlabel_init(winnums, a:winlabel)
+  if self.conf['statusline_replace']
+    call self.statusline_replace(winnums)
+  endif
+  if self.conf['overlay_enable']
+    let self.overlay = choosewin#overlay#get()
+    call self.overlay.overlay(winnums, self.conf)
+  endif
+  redraw
+endfunction
+
+function! s:cw.label_clear() "{{{1
+  if self.conf['statusline_replace']
     call self.statusline_restore()
-    call s:options_restore(self.options)
-    echo '' | redraw
-    if !empty(self.win_dest)
-      silent execute self.win_dest 'wincmd w'
+  endif
+  if self.conf['overlay_enable']
+    call self.overlay.restore()
+  endif
+endfunction
+
+function! s:cw.tab_replace() "{{{1
+  if !self.conf['tabline_replace']
+    return
+  endif
+  let self.tab_options = s:options_replace(s:vim_tab_options)
+endfunction
+
+function! s:cw.tab_restore() "{{{1
+  if !self.conf['tabline_replace']
+    return
+  endif
+  call s:options_restore(self.tab_options)
+endfunction
+
+function! s:cw.start(winnums, ...) "{{{1
+  let arg_1st = get(a:000, 0, {})
+  let arg_2nd = get(a:000, 1, '')
+
+  " care backward compatibility
+  if type(arg_1st) !=# type({})
+    let config = { 'auto_choose': arg_1st }
+    if !empty(arg_2nd)
+      let config.label = arg_2nd
     endif
+    echoerr 'Choosewin: you use old api, help "choosein#start()" for new api-call'
+  else
+    let config = arg_1st
+  endif
+
+  let self.conf   = extend(self.config(), config, 'force')
+  let self.hlter  = choosewin#highlighter#get()
+  let self.color  = self.hlter.color
+
+  if len(a:winnums) ==# 1
+    if self.conf['auto_choose']
+      call self.land_win(a:winnums[0])
+      return self.last_status()
+    elseif self.conf['return_on_single_win']
+      return []
+    endif
+  endif
+
+  try
+    call self.init()
+    call self.tab_replace()
+    call self.label_show(a:winnums, self.conf['label'])
+    try
+      while 1
+        call self.choose(self.win_all(), self.conf['label'])
+      endwhile
+    catch 'CHOOSED'
+    catch 'CANCELED'
+      let self.exception = v:exception
+      return []
+    catch
+      call self.label_clear()
+      let self.exception = v:exception
+    endtry
+  finally
+    call self.finish()
   endtry
+    return self.last_status()
+endfunction
+
+function! s:cw.finish() "{{{1
+  call self.tab_restore()
+  echo '' | redraw
+  if !empty(self.win_dest)
+    call self.land_win(self.win_dest)
+  endif
+  call s:msg(self.exception)
 endfunction
 
 function! choosewin#start(...) "{{{1
-  call call(s:cw.start, a:000, s:cw)
-endfunction
-
-function! choosewin#color_set() "{{{1
-  call s:cw.hl_set()
-  call s:cw.highlighter.refresh()
+  return call(s:cw.start, a:000, s:cw)
 endfunction
 
 function! choosewin#tabline() "{{{1
   return s:cw.tabline()
 endfunction
 
-if expand("%:p") !=# expand("<sfile>:p")
-  finish
-endif
+function! choosewin#config() "{{{1
+  return s:cw.config()
+endfunction
 
-" call s:cw.setup()
-" echo s:cw.color
-
+function! choosewin#get_tablabel(tabnum) "{{{1
+  return s:cw.get_tablabel(a:tabnum)
+endfunction
+"}}}
 " vim: foldmethod=marker
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
